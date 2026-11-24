@@ -143,6 +143,20 @@ typedef enum {
   EXT_ZA256RS,
   EXT_ZA512RS,
   EXT_ZILX,
+  EXT_ZBP,
+  EXT_XW,
+  EXT_XY,
+  EXT_XWK,
+  EXT_XYK,
+  EXT_XN,
+  EXT_XU,
+  EXT_XUSCTR,
+  EXT_XUVINVAL,
+  EXT_XXSCTR,
+  EXT_XT,
+  EXT_XX,
+  EXT_XXVINVAL,
+  EXT_XXRNMI,
   NUM_ISA_EXTENSIONS
 } isa_extension_t;
 

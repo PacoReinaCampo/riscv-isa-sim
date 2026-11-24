@@ -1,0 +1,10 @@
+#include "vdot4a_common.h"
+
+require_extension(EXT_ZVDOT4A);
+require(P.VU.vsew == e32);
+
+VI_VX_LOOP
+({
+  VQDOT(rs1, vs2, int8_t, uint8_t);
+  vd = (vd + result) & 0xffffffff;
+})

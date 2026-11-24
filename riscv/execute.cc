@@ -199,7 +199,8 @@ static inline reg_t execute_insn_logged(processor_t* p, reg_t pc, insn_fetch_t f
 bool processor_t::slow_path() const
 {
   return debug || state.single_step != state.STEP_NONE || state.debug_mode ||
-         log_commits_enabled || histogram_enabled || is_waiting_for_interrupt() || check_triggers_icount;
+         log_commits_enabled || histogram_enabled || is_waiting_for_interrupt() ||
+         check_triggers_icount || transaction_active() || state.machine_ctr.enabled || state.user_ctr_enabled;
 }
 
 // fetch/decode/execute loop
@@ -281,7 +282,12 @@ void processor_t::step(size_t n)
           insn_fetch_t fetch = mmu->access_icache(state.pc)->data;
           if (debug && !state.serialized)
             disasm(fetch.insn);
+          if (unlikely(transaction_active()))
+            check_transaction_instruction(fetch.insn);
           auto new_pc = execute_insn_logged(this, state.pc, fetch);
+          if (unlikely(!transaction_active() && (state.machine_ctr.enabled || state.user_ctr_enabled)) &&
+              new_pc != reg_t(sext(state.pc + fetch.insn.length(), xlen)))
+            record_control_transfer(state.pc, new_pc);
           advance_pc(new_pc);
 
           // Resume from debug mode in critical error
@@ -315,8 +321,20 @@ void processor_t::step(size_t n)
         }
       }
     }
+    catch (const transaction_abort_t& abort)
+    {
+      state.pc = abort_transaction(abort.cause);
+      n = instret;
+    }
     catch(trap_t& t)
     {
+      if (transaction_active()) {
+        state.pc = abort_transaction(TX_TRAP);
+        if (!(t.cause() >> (xlen - 1))) {
+          n = instret;
+          goto serialize;
+        }
+      }
       take_trap(t, state.pc);
       n = instret;
 
@@ -342,6 +360,8 @@ void processor_t::step(size_t n)
     }
     catch (triggers::matched_t& t)
     {
+      if (transaction_active())
+        state.pc = abort_transaction(TX_TRAP);
       take_trigger_action(t.action, t.address, state.pc, t.gva);
       // End this step at the trigger boundary.  In particular, a timing-before
       // trigger retires no instruction, so continuing would immediately execute

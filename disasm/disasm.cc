@@ -957,6 +957,19 @@ void disassembler_t::add_instructions(const isa_parser_t* isa, bool strict)
   #include "encoding.h"
   #undef DECLARE_INSN
 
+  #define DECLARE_VECTOR_PROFILE_INSN(name, mnemonic, profile, ext) \
+    if (isa->extension_enabled(profile) && \
+        (isa->extension_enabled(ext) || (ext == EXT_ZVKNHA && isa->extension_enabled(EXT_ZVKNHB)))) \
+      add_insn(new disasm_insn_t(mnemonic, match_##name, mask_##name, {}));
+  #include "insns/vector_profile.h"
+  #undef DECLARE_VECTOR_PROFILE_INSN
+
+  if (isa->extension_enabled(EXT_ZBP)) {
+    add_insn(new disasm_insn_t("xperm16", match_xperm16, mask_xperm16, {&xrd, &xrs1, &xrs2}));
+    if (isa->get_max_xlen() == 64)
+      add_insn(new disasm_insn_t("xperm32", match_xperm32, mask_xperm32, {&xrd, &xrs1, &xrs2}));
+  }
+
   // explicit per-instruction disassembly
   #define DISASM_INSN(name, code, extra, ...) \
     add_insn(new disasm_insn_t(name, match_##code, mask_##code | (extra), __VA_ARGS__));

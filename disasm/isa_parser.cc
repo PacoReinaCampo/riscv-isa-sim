@@ -92,6 +92,20 @@ static const extension_info_t extension_infos[] = {
   {"c", 32 | 64, {'C'}, {"zca"}},
   {"b", 32 | 64, {'B'}, {"zba", "zbb", "zbs"}},
   {"p", 32 | 64, {'P'}},
+  {"zbp", 32 | 64, {EXT_ZBP}},
+  {"xw", 32 | 64, {EXT_XW}, {"v", "zca"}},
+  {"xy", 32 | 64, {EXT_XY}, {"v", "zca"}},
+  {"xwk", 32 | 64, {EXT_XWK}, {"xw", "zvkn", "zvks", "zvkg", "zvkb"}},
+  {"xyk", 32 | 64, {EXT_XYK}, {"xy", "zvkn", "zvks", "zvkg", "zvkb"}},
+  {"xn", 32 | 64, {EXT_XN}, {"u"}},
+  {"xu", 32 | 64, {EXT_XU}, {"xn"}},
+  {"xusctr", 32 | 64, {EXT_XUSCTR}, {"xu"}},
+  {"xuvinval", 32 | 64, {EXT_XUVINVAL}, {"xu"}},
+  {"xxsctr", 32 | 64, {EXT_XXSCTR}, {"xx"}},
+  {"xt", 32 | 64, {EXT_XT}},
+  {"xx", 32 | 64, {EXT_XX}},
+  {"xxvinval", 32 | 64, {EXT_XXVINVAL}, {"xx"}},
+  {"xxrnmi", 32 | 64, {EXT_XXRNMI}, {"xx", "smrnmi"}},
   {"v", 32 | 64, {'V'}, {"zve64d", "zvl128b"}},
   {"h", 32 | 64, {'H'}},
   // S and U are selected by --priv; implied bits record prerequisites.
@@ -342,6 +356,14 @@ void isa_parser_t::apply_zve_properties(const std::string& ext_str, const char* 
 
 void isa_parser_t::add_extension(const std::string& ext_str, const char* str)
 {
+  if (ext_str.starts_with("zw") || ext_str.starts_with("zy")) {
+    const std::string vector_ext = "zv" + ext_str.substr(2);
+    if (!find_extension_info(vector_ext))
+      bad_isa_string(str, ("unsupported extension: " + ext_str).c_str());
+    add_extension(ext_str[1] == 'w' ? "xw" : "xy", str);
+    add_extension(vector_ext, str);
+    return;
+  }
   if (const auto* info = find_extension_info(ext_str)) {
     if (!(info->xlens & max_xlen))
       bad_isa_string(str, ("'" + ext_str + "' is incompatible with XLEN=" + std::to_string(max_xlen)).c_str());
@@ -435,6 +457,9 @@ isa_parser_t::isa_parser_t(const char* str, const char *priv)
   }
 
   apply_extension_combinations(extension_table);
+
+  if (extension_table[EXT_XW] && extension_table[EXT_XY])
+    bad_isa_string(str, "Xw and Xy share load and store opcodes");
 
   if (extension_table[EXT_ZFBFMIN] || extension_table[EXT_ZFHMIN]) {
     extension_table[EXT_INTERNAL_ZFH_MOVE] = true;

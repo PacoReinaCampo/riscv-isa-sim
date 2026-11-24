@@ -129,6 +129,11 @@ void state_t::reset(processor_t* const proc, reg_t max_isa)
 
   critical_error = false;
 
+  user_trap_frame = false;
+  machine_ctr = {};
+  user_ctr.clear();
+  user_ctr_enabled = proc->extension_enabled(EXT_XUSCTR);
+
   csr_init(proc, max_isa);
 }
 
@@ -155,6 +160,8 @@ void processor_t::enable_log_commits()
 void processor_t::reset()
 {
   xlen = isa.get_max_xlen();
+  transaction.rd = 0;
+  transaction.bytes.clear();
   state.reset(this, isa.get_max_isa());
   mmu->flush_tlb();
   if (any_vector_extensions())
@@ -309,8 +316,12 @@ void processor_t::take_interrupt(reg_t pending_interrupts)
     vs_pending_interrupt &= ~MIP_S_MASK;
   }
 
+  const bool native_user = !state.v && state.prv == PRV_U;
+  const reg_t u_pending = native_user && extension_enabled(EXT_XN)
+      ? state.uip->read() & state.uie->read() : 0;
+
   // Do nothing if no pending interrupts
-  if (!pending_interrupts && !s_pending_interrupts && !vs_pending_interrupt) {
+  if (!pending_interrupts && !s_pending_interrupts && !vs_pending_interrupt && !u_pending) {
     return;
   }
 
@@ -340,6 +351,12 @@ void processor_t::take_interrupt(reg_t pending_interrupts)
     reg_t selected_interrupt = select_an_interrupt_with_default_priority(enabled_interrupts);
     if (check_triggers_icount) TM.detect_icount_match();
     throw trap_t(((reg_t)1 << (isa.get_max_xlen() - 1)) | ctz(selected_interrupt));
+  }
+  if (!state.debug_mode && nmie && u_pending && (state.ustatus->read() & USTATUS_UIE) &&
+      (!state.user_trap_frame || state.user_trap_satp != state.satp->read())) {
+    const reg_t selected = (u_pending & MIP_UEIP) ? MIP_UEIP :
+                           (u_pending & MIP_USIP) ? MIP_USIP : MIP_UTIP;
+    throw trap_t(((reg_t)1 << (isa.get_max_xlen() - 1)) | ctz(selected));
   }
 }
 
@@ -389,6 +406,8 @@ const char* processor_t::get_privilege_string() const
 
 void processor_t::enter_debug_mode(uint8_t cause, uint8_t extcause)
 {
+  if (transaction_active())
+    state.pc = abort_transaction(TX_TRAP);
   const bool has_zicfilp = extension_enabled(EXT_ZICFILP);
   state.debug_mode = true;
   state.dcsr->update_fields(cause, extcause, state.prv, state.v, state.elp);
@@ -448,6 +467,21 @@ void processor_t::take_trap(trap_t& t, reg_t epc)
   } else {
     vsdeleg = (curr_virt && state.prv <= PRV_S) ? (state.medeleg->read() & state.hedeleg->read()) : 0;
     hsdeleg = (state.prv <= PRV_S) ? state.medeleg->read() : 0;
+  }
+  if (interrupt && !curr_virt && state.prv == PRV_U && extension_enabled(EXT_XN) &&
+      bit < max_xlen && ((reg_t(1) << bit) & MIP_U_MASK)) {
+    const reg_t status = state.ustatus->read();
+    const reg_t vector = state.utvec->read();
+    state.user_trap_frame = extension_enabled(EXT_XU);
+    state.user_trap_resume = epc;
+    state.user_trap_satp = state.satp->read();
+    state.user_trap_saved_enable = status & USTATUS_UIE;
+    state.uepc->write(epc);
+    state.ucause->write(t.cause());
+    state.utval->write(t.get_tval());
+    state.ustatus->write(set_field(status & ~USTATUS_UIE, USTATUS_UPIE, state.user_trap_saved_enable));
+    state.pc = (vector & ~reg_t(1)) + ((vector & 1) ? 4 * bit : 0);
+    return;
   }
   // An unexpected trap - a trap when SDT is 1 - traps to M-mode
   if ((state.prv <= PRV_S && bit < max_xlen) &&
@@ -702,6 +736,111 @@ insn_func_t processor_t::decode_insn(insn_t insn)
   }
 }
 
+void processor_t::record_control_transfer(reg_t pc, reg_t target)
+{
+  if (invalid_pc(target))
+    return;
+
+  if (state.prv == PRV_M && state.machine_ctr.enabled)
+    state.machine_ctr.record(pc, target, state.mcycle->read());
+  if (state.prv == PRV_U && !state.v && state.user_ctr_enabled)
+    state.user_ctr[state.satp->read()].record(pc, target, state.mcycle->read());
+}
+
+reg_t processor_t::begin_transaction(unsigned rd, reg_t pc)
+{
+  mmu->yield_load_reservation();
+  transaction.xpr = state.XPR;
+  transaction.elp = state.elp;
+  if (state.vxsat)
+    transaction.vxsat = state.vxsat->read();
+  transaction.pc = pc;
+  transaction.rd = rd;
+  return 0;
+}
+
+reg_t processor_t::abort_transaction(reg_t cause)
+{
+  state.XPR = transaction.xpr;
+  state.elp = transaction.elp;
+  if (state.vxsat && state.vxsat->read() != transaction.vxsat)
+    state.vxsat->write(transaction.vxsat);
+  state.XPR.write(transaction.rd, cause);
+  transaction.bytes.clear();
+  transaction.rd = 0;
+  return transaction.pc;
+}
+
+bool processor_t::commit_transaction()
+{
+  for (const auto& [addr, byte] : transaction.bytes) {
+    auto mem = reinterpret_cast<const uint8_t*>(sim->addr_to_mem(addr));
+    if (!mem || *mem != byte.original)
+      return false;
+  }
+
+  for (const auto& [addr, byte] : transaction.bytes) {
+    if (byte.written)
+      *reinterpret_cast<uint8_t*>(sim->addr_to_mem(addr)) = byte.value;
+  }
+
+  transaction.bytes.clear();
+  transaction.rd = 0;
+  return true;
+}
+
+void processor_t::transaction_access(reg_t paddr, uintptr_t host_addr, size_t len,
+                                     const uint8_t* write, uint8_t* read)
+{
+  if (!host_addr)
+    throw transaction_abort_t{TX_UNSUPPORTED};
+
+  const auto* bytes = reinterpret_cast<const uint8_t*>(host_addr);
+  for (size_t i = 0; i < len; ++i) {
+    const auto [it, inserted] = transaction.bytes.try_emplace(
+        paddr + i, decltype(transaction.bytes)::mapped_type{bytes[i], bytes[i], false});
+    if ((inserted && transaction.bytes.size() > 4096) || it->second.original != bytes[i])
+      throw transaction_abort_t{inserted ? TX_CAPACITY : TX_CONFLICT};
+    if (write) {
+      it->second.value = write[i];
+      it->second.written = true;
+    } else {
+      read[i] = it->second.value;
+    }
+  }
+}
+
+void processor_t::check_transaction_instruction(insn_t insn) const
+{
+  if (insn.length() == 2) {
+    const auto funct3 = (insn.bits() >> 13) & 7;
+    const auto quadrant = insn.bits() & 3;
+    const bool word_access = funct3 == 2 || funct3 == 6;
+    const bool doubleword_access = xlen == 64 && (funct3 == 3 || funct3 == 7);
+    if (quadrant == 1 ||
+        ((quadrant == 0 || quadrant == 2) &&
+         (funct3 == 0 || funct3 == 4 || word_access || doubleword_access)))
+      return;
+  } else if (insn.length() == 4) {
+    switch (insn.opcode()) {
+      case 0x03:
+      case 0x13:
+      case 0x17:
+      case 0x1b:
+      case 0x23:
+      case 0x33:
+      case 0x37:
+      case 0x3b:
+      case 0x63:
+      case 0x67:
+      case 0x6b:
+      case 0x6f:
+        return;
+    }
+  }
+  throw transaction_abort_t{TX_UNSUPPORTED};
+}
+
 void processor_t::register_insn(insn_desc_t desc, std::vector<insn_desc_t>& pool) {
   assert(desc.fast_rv32i && desc.fast_rv64i && desc.fast_rv32e && desc.fast_rv64e &&
          desc.logged_rv32i && desc.logged_rv64i && desc.logged_rv32e && desc.logged_rv64e);
@@ -771,6 +910,11 @@ void processor_t::register_base_instructions()
     extern reg_t logged_rv32e_##name(processor_t*, insn_t, reg_t); \
     extern reg_t logged_rv64e_##name(processor_t*, insn_t, reg_t);
   #include "insn_list.h"
+#ifdef HAVE_INT128
+  #define DECLARE_VECTOR_PROFILE_INSN(name, mnemonic, profile, ext) DEFINE_INSN(name)
+  #include "insns/vector_profile.h"
+  #undef DECLARE_VECTOR_PROFILE_INSN
+#endif
   #undef DEFINE_INSN
 
   #define DEFINE_INSN_UNCOND(name) { \
@@ -788,6 +932,15 @@ void processor_t::register_base_instructions()
     }; \
     register_base_insn(insn); \
   }
+
+#ifdef HAVE_INT128
+  #define DECLARE_VECTOR_PROFILE_INSN(name, mnemonic, profile, ext) \
+    if (isa.extension_enabled(profile) && \
+        (isa.extension_enabled(ext) || (ext == EXT_ZVKNHA && isa.extension_enabled(EXT_ZVKNHB)))) \
+      DEFINE_INSN_UNCOND(name);
+  #include "insns/vector_profile.h"
+  #undef DECLARE_VECTOR_PROFILE_INSN
+#endif
 
   // add overlapping instructions first, in order
   #define DECLARE_OVERLAP_INSN(name, ext) \

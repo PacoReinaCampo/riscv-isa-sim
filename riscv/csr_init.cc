@@ -1,6 +1,20 @@
 #include "processor.h"
 #include "debug_defines.h"
 
+namespace {
+template<typename Base>
+class native_user_csr_t final : public Base {
+public:
+  using Base::Base;
+
+  void verify_permissions(insn_t insn, bool write) const override {
+    if (this->state->v)
+      throw trap_virtual_instruction(insn.bits());
+    Base::verify_permissions(insn, write);
+  }
+};
+}
+
 void state_t::add_csr(reg_t addr, const csr_t_p& csr)
 {
   csrmap[addr] = csr;
@@ -114,6 +128,16 @@ void state_t::csr_init(processor_t* const proc, reg_t max_isa)
   } else {
     add_csr(CSR_MIE, mie);
     add_csr(CSR_MIP, mip);
+  }
+  if (proc->extension_enabled(EXT_XN)) {
+    add_csr(CSR_USTATUS, ustatus = std::make_shared<native_user_csr_t<masked_csr_t>>(proc, CSR_USTATUS, USTATUS_UIE | USTATUS_UPIE, 0));
+    add_csr(CSR_UIE, uie = std::make_shared<native_user_csr_t<masked_csr_t>>(proc, CSR_UIE, MIP_U_MASK, 0));
+    add_csr(CSR_UTVEC, utvec = std::make_shared<native_user_csr_t<tvec_csr_t>>(proc, CSR_UTVEC));
+    add_csr(CSR_USCRATCH, std::make_shared<native_user_csr_t<basic_csr_t>>(proc, CSR_USCRATCH, 0));
+    add_csr(CSR_UEPC, uepc = std::make_shared<native_user_csr_t<epc_csr_t>>(proc, CSR_UEPC));
+    add_csr(CSR_UCAUSE, ucause = std::make_shared<native_user_csr_t<cause_csr_t>>(proc, CSR_UCAUSE));
+    add_csr(CSR_UTVAL, utval = std::make_shared<native_user_csr_t<basic_csr_t>>(proc, CSR_UTVAL, 0));
+    add_csr(CSR_UIP, uip = std::make_shared<native_user_csr_t<masked_csr_t>>(proc, CSR_UIP, MIP_U_MASK, 0));
   }
   auto sip_sie_accr = std::make_shared<generic_int_accessor_t>(
     this,

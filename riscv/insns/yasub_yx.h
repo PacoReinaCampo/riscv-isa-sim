@@ -1,0 +1,1 @@
+VI_VX_LOOP_AVG(-);

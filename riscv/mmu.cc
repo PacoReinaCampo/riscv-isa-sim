@@ -67,6 +67,17 @@ void mmu_t::flush_tlb()
   flush_icache();
 }
 
+void mmu_t::flush_tlb_address(reg_t addr)
+{
+  const auto vpn = addr / PGSIZE;
+  for (auto* tlb : {tlb_insn, tlb_load, tlb_store}) {
+    auto& entry = tlb[vpn % TLB_ENTRIES];
+    if ((entry.tag & ~TLB_FLAGS) == vpn)
+      entry.tag = -1;
+  }
+  flush_icache();
+}
+
 [[noreturn]] void throw_access_exception(bool virt, reg_t addr, access_type type)
 {
   switch (type) {
@@ -237,6 +248,10 @@ void mmu_t::check_triggers(triggers::operation_t operation, reg_t address, bool 
 
 inline void mmu_t::perform_intrapage_load(reg_t vaddr, uintptr_t host_addr, reg_t paddr, reg_t len, uint8_t* bytes, xlate_flags_t xlate_flags)
 {
+  if (proc && proc->transaction_active()) {
+    proc->transaction_access(paddr, host_addr, len, nullptr, bytes);
+    return;
+  }
   if (host_addr) {
     memcpy(bytes, (char*)host_addr, len);
   } else if (!mmio_load(paddr, len, bytes)) {
@@ -332,6 +347,10 @@ void mmu_t::load_slow_path(reg_t original_addr, std::size_t len,
 
 inline void mmu_t::perform_intrapage_store(reg_t vaddr, uintptr_t host_addr, reg_t paddr, reg_t len, const uint8_t* bytes, xlate_flags_t xlate_flags)
 {
+  if (proc && proc->transaction_active()) {
+    proc->transaction_access(paddr, host_addr, len, bytes, nullptr);
+    return;
+  }
   if (host_addr) {
      memcpy((char*)host_addr, bytes, len);
   } else if (!mmio_store(paddr, len, bytes)) {

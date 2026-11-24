@@ -27,6 +27,19 @@ class mmu_t;
 typedef reg_t (*insn_func_t)(processor_t*, insn_t, reg_t);
 class simif_t;
 class trap_t;
+enum : reg_t {
+  TX_EXPLICIT = 1,
+  TX_NESTED = 2,
+  TX_CONFLICT = 4,
+  TX_CAPACITY = 8,
+  TX_UNSUPPORTED = 16,
+  TX_TRAP = 32,
+};
+
+struct transaction_abort_t {
+  reg_t cause;
+};
+
 class extension_t;
 class disassembler_t;
 
@@ -122,6 +135,39 @@ struct state_t
   csr_t_p stval;
   csr_t_p stvec;
   virtualized_csr_t_p satp;
+  csr_t_p ustatus, uie, utvec, uepc, ucause, utval, uip;
+  reg_t user_trap_resume = 0;
+  reg_t user_trap_satp = 0;
+  bool user_trap_frame = false;
+  bool user_trap_saved_enable = false;
+
+  struct ctr_bank_t {
+    struct entry_t {
+      reg_t source;
+      reg_t target;
+    };
+    std::array<entry_t, 32> entries{};
+    size_t next = 0;
+    reg_t cycle = 0;
+    bool cycle_valid = false;
+    bool enabled = false;
+
+    void clear() {
+      entries.fill({});
+      next = 0;
+      cycle = 0;
+      cycle_valid = false;
+    }
+
+    void record(reg_t source, reg_t target, reg_t timestamp) {
+      entries[next] = {source, target};
+      next = (next + 1) % entries.size();
+      cycle = timestamp;
+      cycle_valid = true;
+    }
+  } machine_ctr;
+  std::map<reg_t, ctr_bank_t> user_ctr;
+  bool user_ctr_enabled = false;
   csr_t_p scause;
   csr_t_p scountinhibit;
 
@@ -317,6 +363,14 @@ public:
     const int ialign = extension_enabled(EXT_ZCA) ? 16 : 32;
     return ~(reg_t)(ialign == 16 ? 0 : 2);
   }
+  bool transaction_active() const { return transaction.rd != 0; }
+  reg_t begin_transaction(unsigned rd, reg_t pc);
+  reg_t abort_transaction(reg_t cause);
+  bool commit_transaction();
+  void transaction_access(reg_t paddr, uintptr_t host_addr, size_t len,
+                          const uint8_t* write, uint8_t* read);
+  void check_transaction_instruction(insn_t insn) const;
+  void record_control_transfer(reg_t pc, reg_t target);
   void set_vxsat() {
     state.vxsat->write(1);
   }
@@ -383,6 +437,20 @@ private:
   unsigned xlen;
   unsigned max_vaddr_bits;
   bool histogram_enabled;
+  struct {
+    struct byte_t {
+      uint8_t original;
+      uint8_t value;
+      bool written;
+    };
+    std::map<reg_t, byte_t> bytes;
+    regfile_t<reg_t, NXPR, true> xpr;
+    elp_t elp = elp_t::NO_LP_EXPECTED;
+    reg_t vxsat = 0;
+    reg_t pc = 0;
+    unsigned rd = 0;
+  } transaction;
+
   bool log_commits_enabled;
   FILE *log_file;
   std::ostream sout_; // needed for socket command interface -s, also used for -d and -l, but not for --log

@@ -85,6 +85,10 @@ riscv_srcs = \
 
 riscv_test_srcs = \
   check-opcode-overlap.t.cc \
+  specific-arithmetic.t.cc \
+  specific-privilege.t.cc \
+  specific-parallelism.t.cc \
+  $(if $(HAVE_INT128),specific-algebra.t.cc specific-crypto.t.cc) \
 
 riscv_gen_hdrs = \
 	insn_list.h \
@@ -454,6 +458,8 @@ riscv_insn_ext_b = \
 	xnor \
 	xperm4 \
 	xperm8 \
+	xperm16 \
+	xperm32 \
 
 # Scalar Crypto ISE
 riscv_insn_ext_k = \
@@ -1810,6 +1816,40 @@ riscv_insn_ext_p = \
 	pnclipup_h \
 	pnclipup_w \
 
+riscv_insn_ext_x = \
+	mfence_gvma \
+	mfence_vvma \
+	mfence_vma \
+	minval_gvma \
+	minval_vvma \
+	minval_vma \
+	mfence_inval_ir \
+	mfence_w_inval \
+	mtrapret \
+	mntrapret \
+	mwait \
+
+riscv_insn_ext_n = \
+	uret \
+
+riscv_insn_ext_u = \
+	utrapret \
+	uctrclr \
+	ufence_vma \
+	uinval_vma \
+	ufence_inval_ir \
+	ufence_w_inval \
+
+riscv_insn_ext_ctr = \
+	mctrclr \
+	mctrctl \
+
+riscv_insn_ext_t = \
+	tbegin \
+	tcommit \
+	tabort \
+	ttest \
+
 riscv_insn_list = \
 	$(riscv_insn_ext_i) \
 	$(riscv_insn_ext_c) \
@@ -1817,6 +1857,11 @@ riscv_insn_list = \
 	$(riscv_insn_ext_d) \
 	$(riscv_insn_ext_m) \
 	$(riscv_insn_ext_b) \
+	$(riscv_insn_ext_x) \
+	$(riscv_insn_ext_n) \
+	$(riscv_insn_ext_u) \
+	$(riscv_insn_ext_ctr) \
+	$(riscv_insn_ext_t) \
 	$(riscv_insn_ext_a) \
 	$(if $(HAVE_INT128),$(riscv_insn_ext_v),) \
 	$(riscv_insn_ext_zvfofp4min) \
@@ -1854,7 +1899,9 @@ riscv_insn_list = \
 	$(riscv_insn_ext_zicfilp) \
 	$(riscv_insn_ext_zicfiss) \
 
-riscv_gen_srcs = $(addsuffix .cc,$(riscv_insn_list))
+riscv_insn_vector_profile := $(shell sed -n 's/^DECLARE_VECTOR_PROFILE_INSN(\([^,]*\),.*,.*,.*)/\1/p' $(src_dir)/riscv/insns/vector_profile.h)
+
+riscv_gen_srcs = $(addsuffix .cc,$(riscv_insn_list) $(if $(HAVE_INT128),$(riscv_insn_vector_profile)))
 
 insn_list.h: $(src_dir)/riscv/riscv.mk.in
 	for insn in $(foreach insn,$(riscv_insn_list),$(subst .,_,$(insn))) ; do \

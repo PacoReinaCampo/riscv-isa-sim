@@ -109,7 +109,8 @@ public:
     bool aligned = (addr & (sizeof(T) - 1)) == 0;
     auto [tlb_hit, host_addr, _] = access_tlb(tlb_load, addr);
 
-    if (likely(!xlate_flags.is_special_access() && aligned && tlb_hit)) {
+    if (likely((!proc || !proc->transaction_active()) &&
+               !xlate_flags.is_special_access() && aligned && tlb_hit)) {
       res = *(target_endian<T>*)host_addr;
     } else {
       load_slow_path(addr, sizeof(T), (uint8_t*)&res, xlate_flags);
@@ -153,7 +154,8 @@ public:
     bool aligned = (addr & (sizeof(T) - 1)) == 0;
     auto [tlb_hit, host_addr, _] = access_tlb(tlb_store, addr);
 
-    if (!xlate_flags.is_special_access() && likely(aligned && tlb_hit)) {
+    if (likely((!proc || !proc->transaction_active()) &&
+               !xlate_flags.is_special_access() && aligned && tlb_hit)) {
       *(target_endian<T>*)host_addr = to_target(val);
     } else {
       target_endian<T> target_val = to_target(val);
@@ -369,6 +371,7 @@ public:
   }
 
   void flush_tlb();
+  void flush_tlb_address(reg_t addr);
   void flush_icache();
   void flush_icache_for_triggers() { if (check_triggers_fetch) flush_icache(); }
 
@@ -502,6 +505,8 @@ private:
   template<typename T> inline void pte_store(reg_t pte_paddr, reg_t new_pte, reg_t addr, bool virt, access_type trap_type)
   {
     const size_t ptesize = sizeof(T);
+    if (proc && proc->transaction_active())
+      throw transaction_abort_t{TX_UNSUPPORTED};
 
     if (!pmp_ok(pte_paddr, ptesize, STORE, PRV_S, false))
       throw_access_exception(virt, addr, trap_type);
