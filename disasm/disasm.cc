@@ -741,7 +741,8 @@ static void NOINLINE add_fstore_insn(disassembler_t* d, const char* name, uint32
   d->add_insn(new disasm_insn_t(name, match, mask, {&frs2, &store_address}));
 }
 
-static void NOINLINE add_xamo_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_xamo_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask,
+                                  bool load_reserved = false)
 {
   const char *suffix[] = {"", ".rl", ".aq", ".aqrl"};
   char new_name[128];
@@ -752,7 +753,10 @@ static void NOINLINE add_xamo_insn(disassembler_t* d, const char* name, uint32_t
     snprintf(new_name, sizeof(new_name), "%s%s", name, suffix[idx]);
     new_match = match | (idx << 25);
 
-    d->add_insn(new disasm_insn_t(new_name, new_match, new_mask, {&xrd, &xrs2, &base_only_address}));
+    if (load_reserved)
+      d->add_insn(new disasm_insn_t(new_name, new_match, new_mask, {&xrd, &base_only_address}));
+    else
+      d->add_insn(new disasm_insn_t(new_name, new_match, new_mask, {&xrd, &xrs2, &base_only_address}));
   }
 }
 
@@ -1084,6 +1088,13 @@ void disassembler_t::add_instructions(const isa_parser_t* isa, bool strict)
       DEFINE_XLOAD_BASE(lr_d)
       DEFINE_XAMO(sc_d)
     }
+  }
+
+  if (ext_enabled(EXT_ZABHLRSC)) {
+    add_xamo_insn(this, "lr_b", match_lr_b, mask_lr_b, true);
+    add_xamo_insn(this, "lr_h", match_lr_h, mask_lr_h, true);
+    DEFINE_XAMO(sc_b)
+    DEFINE_XAMO(sc_h)
   }
 
   if (ext_enabled(EXT_ZACAS)) {
