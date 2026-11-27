@@ -147,6 +147,7 @@ typedef enum {
   EXT_ZBP,
   EXT_XW,
   EXT_XY,
+  EXT_RVO,
   EXT_XWK,
   EXT_XYK,
   EXT_XN,

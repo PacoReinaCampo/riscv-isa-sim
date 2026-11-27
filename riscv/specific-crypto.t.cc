@@ -17,14 +17,14 @@ struct profile_t {
   const char* isa;
   const char* isa_without_crypto;
   uint32_t set_vl;
-  uint32_t aes;
+  insn_bits_t aes;
   size_t aes_size;
 };
 
 constexpr profile_t profiles[] = {
   {"VK", "v_zvkned", "v", MATCH_VSETVLI, MATCH_VAESZ_VS, 4},
   {"WK", "_xwk", "_xw", MATCH_WSETWLI, MATCH_WAESZ_WS, 6},
-  {"YK", "_xyk", "_xy", MATCH_YSETYLI, MATCH_YAESZ_YS, 8},
+  {"YK", "_xyk", "_xy", MATCH_YSETYLI, MATCH_YAESZ_YS, 6},
 };
 
 cfg_t make_config(const std::string& isa)
@@ -53,7 +53,7 @@ struct machine_t {
     state.mstatus->write(state.mstatus->read() | MSTATUS_VS);
   }
 
-  bool execute(uint32_t opcode, size_t size, reg_t expected_pc)
+  bool execute(insn_bits_t opcode, size_t size, reg_t expected_pc)
   {
     const auto bytes = to_le(uint64_t(opcode));
     if (!mem.store(state.pc - base, size, reinterpret_cast<const uint8_t*>(&bytes)))
@@ -62,12 +62,12 @@ struct machine_t {
     return state.pc == expected_pc;
   }
 
-  bool step(uint32_t opcode, size_t size = 4)
+  bool step(insn_bits_t opcode, size_t size = 4)
   {
     return execute(opcode, size, state.pc + size);
   }
 
-  bool illegal(uint32_t opcode, size_t size)
+  bool illegal(insn_bits_t opcode, size_t size)
   {
     auto pc = state.pc;
     return execute(opcode, size, trap_pc) &&

@@ -95,6 +95,7 @@ static const extension_info_t extension_infos[] = {
   {"zbp", 32 | 64, {EXT_ZBP}},
   {"xw", 32 | 64, {EXT_XW}, {"v", "zca"}},
   {"xy", 32 | 64, {EXT_XY}, {"v", "zca"}},
+  {"rvo", 32 | 64, {EXT_RVO}},
   {"xwk", 32 | 64, {EXT_XWK}, {"xw", "zvkn", "zvks", "zvkg", "zvkb"}},
   {"xyk", 32 | 64, {EXT_XYK}, {"xy", "zvkn", "zvks", "zvkg", "zvkb"}},
   {"xn", 32 | 64, {EXT_XN}, {"u"}},
@@ -427,7 +428,7 @@ isa_parser_t::isa_parser_t(const char* str, const char *priv)
 
   const char* isa_str = isa_string.c_str();
   auto p = isa_str, subset = all_subsets;
-  for (p += 5; islower(*p) && !strchr("zsx", *p); ++p) {
+  for (p += 5; islower(*p) && !strchr("rzsx", *p); ++p) {
     while (*subset && (*p != *subset))
       ++subset;
 

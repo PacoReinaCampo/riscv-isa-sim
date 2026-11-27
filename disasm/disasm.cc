@@ -647,101 +647,110 @@ typedef struct {
   std::vector<const arg_t*>& arg;
 } custom_fmt_t;
 
+static insn_t rvo_base_insn(insn_t insn)
+{
+  return insn_t((insn.bits() & 0xffffff80) | ((insn.bits() >> 32) & 0x7f));
+}
+
 std::string disassembler_t::disassemble(insn_t insn) const
 {
   const disasm_insn_t* disasm_insn = lookup(insn);
-  return disasm_insn ? disasm_insn->to_string(insn) : "unknown";
+  if (!disasm_insn)
+    return "unknown";
+  if (insn.length() == 8 && insn.opcode() == 0x3f)
+    return "o." + disasm_insn->to_string(rvo_base_insn(insn));
+  return disasm_insn->to_string(insn);
 }
 
-static void NOINLINE add_noarg_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_noarg_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {}));
 }
 
-static void NOINLINE add_rtype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_rtype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &xrs1, &xrs2}));
 }
 
-static void NOINLINE add_r1type_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_r1type_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &xrs1}));
 }
 
-static void NOINLINE add_r3type_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_r3type_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &xrs1, &xrs2, &xrs3}));
 }
 
 // RV32 P-extension register pair instruction types
 // Type 1: rdp only (widening: result is pair, sources are normal regs)
-static void NOINLINE add_rtype_rdp_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_rtype_rdp_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd_p, &xrs1, &xrs2}));
 }
 
 // Type 1 variant: rdp + rs1 only (for unary widening ops)
-static void NOINLINE add_r1type_rdp_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_r1type_rdp_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd_p, &xrs1}));
 }
 
 // Type 1 variant: rdp + rs1 + imm (for widening immediate ops)
 // Type 2: rs1p only (narrowing: source is pair, result is normal reg)
-static void NOINLINE add_rtype_rs1p_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_rtype_rs1p_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &xrs1_p, &xrs2}));
 }
 
 // Type 3: rdp + rs1p (both pairs, with scalar rs2)
-static void NOINLINE add_rtype_rdp_rs1p_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_rtype_rdp_rs1p_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd_p, &xrs1_p, &xrs2}));
 }
 
 // Type 3 variant: rdp + rs1p only (for unary doubleword ops)
-static void NOINLINE add_r1type_rdp_rs1p_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_r1type_rdp_rs1p_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd_p, &xrs1_p}));
 }
 
 // Type 4: rdp + rs1p + rs2p (all three are register pairs)
-static void NOINLINE add_rtype_pair_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_rtype_pair_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd_p, &xrs1_p, &xrs2_p}));
 }
 
-static void NOINLINE add_itype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_itype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &xrs1, &imm}));
 }
 
-static void NOINLINE add_itype_shift_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_itype_shift_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &xrs1, &shamt}));
 }
 
-static void NOINLINE add_xload_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_xload_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &load_address}));
 }
 
-static void NOINLINE add_xstore_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_xstore_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrs2, &store_address}));
 }
 
-static void NOINLINE add_fload_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_fload_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frd, &load_address}));
 }
 
-static void NOINLINE add_fstore_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_fstore_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frs2, &store_address}));
 }
 
-static void NOINLINE add_xamo_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask,
+static void NOINLINE add_xamo_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask,
                                   bool load_reserved = false)
 {
   const char *suffix[] = {"", ".rl", ".aq", ".aqrl"};
@@ -760,159 +769,159 @@ static void NOINLINE add_xamo_insn(disassembler_t* d, const char* name, uint32_t
   }
 }
 
-static void NOINLINE add_xlr_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_xlr_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &base_only_address}));
 }
 
-static void NOINLINE add_zilx_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_zilx_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   // Zilx assembly syntax: mnemonic rd, (rs2), rs1  (rs2 is base, rs1 is index)
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &base_rs2_address, &xrs1}));
 }
 
-static void NOINLINE add_xst_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_xst_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrs2, &base_only_address}));
 }
 
-static void NOINLINE add_btype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_btype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrs1, &xrs2, &branch_target}));
 }
 
-static void NOINLINE add_bimmtype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_bimmtype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrs1, &b_imm5, &branch_target}));
 }
 
-static void NOINLINE add_b1type_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_b1type_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   const uint32_t mask_rs2 = 0x1fUL << 20;
   d->add_insn(new disasm_insn_t(name, match, mask | mask_rs2, {&xrs1, &branch_target}));
 }
 
-static void NOINLINE add_frtype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_frtype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frd, &frs1, &frs2}));
 }
 
-static void NOINLINE add_fr1type_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_fr1type_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frd, &frs1}));
 }
 
-static void NOINLINE add_fr3type_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_fr3type_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frd, &frs1, &frs2, &frs3}));
 }
 
-static void NOINLINE add_fxtype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_fxtype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &frs1}));
 }
 
-static void NOINLINE add_xftype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_xftype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frd, &xrs1}));
 }
 
-static void NOINLINE add_xf2type_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_xf2type_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frd, &xrs1, &xrs2}));
 }
 
-static void NOINLINE add_fx2type_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_fx2type_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &frs1, &frs2}));
 }
 
-static void NOINLINE add_fxrtype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_fxrtype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrd, &frs1, &rm}));
 }
 
-static void NOINLINE add_flitype_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_flitype_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&frd, &fli_imm}));
 }
 
-static void NOINLINE add_sfence_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_sfence_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&xrs1, &xrs2}));
 }
 
-static void NOINLINE add_vector_v_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_v_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, opt, &vm}));
 }
 
-static void NOINLINE add_vector_vv_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_vv_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &vs1, opt, &vm}));
 }
 
-static void NOINLINE add_vector_bdota_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_bdota_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &bdota_vs2, &vs1, &bdota_ci, opt, &vm}));
 }
 
-static void NOINLINE add_vector_multiplyadd_vv_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_multiplyadd_vv_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs1, &vs2, opt, &vm}));
 }
 
-static void NOINLINE add_vector_vx_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_vx_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &xrs1, opt, &vm}));
 }
 
-static void NOINLINE add_vector_multiplyadd_vx_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_multiplyadd_vx_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &xrs1, &vs2, opt, &vm}));
 }
 
-static void NOINLINE add_vector_vf_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_vf_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &frs1, opt, &vm}));
 }
 
-static void NOINLINE add_vector_multiplyadd_vf_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_multiplyadd_vf_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &frs1, &vs2, opt, &vm}));
 }
 
-static void NOINLINE add_vector_vi_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_vi_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &v_simm5, opt, &vm}));
 }
 
-static void NOINLINE add_vector_viu_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_viu_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &zimm5, opt, &vm}));
 }
 
-static void NOINLINE add_vector_viu_z6_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_viu_z6_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &v_zimm6, opt, &vm}));
 }
 
-static void NOINLINE add_vector_vvm_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_vvm_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &vs1, &v0}));
 }
 
-static void NOINLINE add_vector_vxm_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_vxm_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &xrs1, &v0}));
 }
 
-static void NOINLINE add_vector_vim_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_vector_vim_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   d->add_insn(new disasm_insn_t(name, match, mask, {&vd, &vs2, &v_simm5, &v0}));
 }
 
-static void NOINLINE add_unknown_insn(disassembler_t* d, const char* name, uint32_t match, uint32_t mask)
+static void NOINLINE add_unknown_insn(disassembler_t* d, const char* name, insn_bits_t match, insn_bits_t mask)
 {
   std::string s = name;
   s += " (args unknown)";
@@ -956,8 +965,8 @@ void disassembler_t::add_instructions(const isa_parser_t* isa, bool strict)
   const uint32_t mask_rvc_shamt_msb = 0x1Ul << 12;
 
   #define DECLARE_INSN(code, match, mask) \
-   const uint32_t match_##code = match; \
-   const uint32_t mask_##code = mask;
+   const insn_bits_t match_##code = match; \
+   const insn_bits_t mask_##code = mask;
   #include "encoding.h"
   #undef DECLARE_INSN
 
@@ -967,6 +976,11 @@ void disassembler_t::add_instructions(const isa_parser_t* isa, bool strict)
       add_insn(new disasm_insn_t(mnemonic, match_##name, mask_##name, {}));
   #include "insns/vector_profile.h"
   #undef DECLARE_VECTOR_PROFILE_INSN
+  #define DECLARE_LONG_VECTOR_INSN(alias, name, ext, match, mask) \
+    if (isa->extension_enabled(ext)) \
+      add_insn(new disasm_insn_t(#alias, match, mask, {}));
+  #include "encoding.h"
+  #undef DECLARE_LONG_VECTOR_INSN
 
   if (isa->extension_enabled(EXT_ZBP)) {
     add_insn(new disasm_insn_t("xperm16", match_xperm16, mask_xperm16, {&xrd, &xrs1, &xrs2}));
@@ -3216,6 +3230,7 @@ void disassembler_t::add_instructions(const isa_parser_t* isa, bool strict)
 }
 
 disassembler_t::disassembler_t(const isa_parser_t *isa, bool strict)
+  : rvo_xlen(isa->extension_enabled(EXT_RVO) ? isa->get_max_xlen() : 0)
 {
   // highest priority: instructions explicitly enabled
   add_instructions(isa, true);
@@ -3245,6 +3260,15 @@ const disasm_insn_t* disassembler_t::probe_once(insn_t insn, size_t idx) const
 
 const disasm_insn_t* disassembler_t::lookup(insn_t insn) const
 {
+  if (insn.length() == 8 && insn.opcode() == 0x3f) {
+    #define DECLARE_RVO_INSN(name, min_xlen, match, mask) \
+      if (rvo_xlen >= min_xlen && (insn.bits() & (mask)) == (match)) \
+        return lookup(rvo_base_insn(insn));
+    #include "encoding.h"
+    #undef DECLARE_RVO_INSN
+    return nullptr;
+  }
+
   if (auto p = probe_once(insn, hash(insn.bits(), MASK1)))
     return p;
 

@@ -52,7 +52,7 @@ int main(int UNUSED argc, char** argv)
 
       const disasm_insn_t* disasm = p.get_disassembler()->lookup(opcode);
       if (disasm) {
-          cout << disasm->get_name() << '\n';
+          cout << ((opcode & 0x7f) == 0x3f ? "o." : "") << disasm->get_name() << '\n';
       } else {
           cout << "unknown_op\n";
       }

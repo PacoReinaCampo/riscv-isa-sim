@@ -712,12 +712,11 @@ const insn_desc_t insn_desc_t::illegal_instruction = {
   &::illegal_instruction, &::illegal_instruction, &::illegal_instruction, &::illegal_instruction
 };
 
-reg_t illegal_instruction(processor_t UNUSED *p, insn_t insn, reg_t UNUSED pc)
+reg_t illegal_instruction(processor_t* p, insn_t insn, reg_t UNUSED pc)
 {
-  // The illegal instruction can be longer than ILEN bits, where the tval will
-  // contain the first ILEN bits of the faulting instruction. We hard-code the
-  // ILEN to 32 bits since all official instructions have at most 32 bits.
-  throw trap_illegal_instruction(insn.bits() & 0xffffffffULL);
+  const unsigned ilen = p->extension_enabled(EXT_RVO) ? 64 : p->supports_long_instructions() ? 48 : 32;
+  const unsigned tval_bits = std::min(unsigned(p->get_xlen()), ilen);
+  throw trap_illegal_instruction(insn.bits() & (~insn_bits_t(0) >> (64 - tval_bits)));
 }
 
 reg_t processor_t::throw_instruction_address_misaligned(reg_t pc)
@@ -851,15 +850,15 @@ void processor_t::register_insn(insn_desc_t desc, std::vector<insn_desc_t>& pool
 void processor_t::build_opcode_map()
 {
   bool rve = extension_enabled('E');
-  bool zca = extension_enabled(EXT_ZCA);
+  bool ialign16 = supports_ialign16();
   const size_t N = std::size(opcode_map);
 
   auto build_one = [&](const insn_desc_t& desc) {
     auto func = desc.func(xlen, rve, log_commits_enabled);
-    if (!zca && insn_length(desc.match) % 4)
+    if (!ialign16 && insn_length(desc.match) % 4)
       func = &::illegal_instruction;
 
-    auto stride = std::min(N, size_t(1) << ctz(~desc.mask));
+    auto stride = (desc.mask & (N - 1)) == N - 1 ? N : size_t(1) << ctz(~desc.mask);
     for (size_t i = desc.match & (stride - 1); i < N; i += stride) {
       if ((desc.match % N) == (i & desc.mask))
         opcode_map[i].push_back({desc.match, desc.mask, func});
@@ -917,10 +916,10 @@ void processor_t::register_base_instructions()
 #endif
   #undef DEFINE_INSN
 
-  #define DEFINE_INSN_UNCOND(name) { \
+  #define DEFINE_INSN_MATCH(name, match, mask) { \
     insn_desc_t insn = { \
-      name##_match, \
-      name##_mask, \
+      match, \
+      mask, \
       fast_rv32i_##name, \
       fast_rv64i_##name, \
       fast_rv32e_##name, \
@@ -932,6 +931,19 @@ void processor_t::register_base_instructions()
     }; \
     register_base_insn(insn); \
   }
+
+  #define DEFINE_INSN_UNCOND(name) DEFINE_INSN_MATCH(name, name##_match, name##_mask)
+  #define DECLARE_RVO_INSN(name, min_xlen, match, mask) \
+    if (isa.extension_enabled(EXT_RVO) && xlen >= min_xlen) \
+      DEFINE_INSN_MATCH(name, match, mask);
+#ifdef HAVE_INT128
+  #define DECLARE_LONG_VECTOR_INSN(alias, name, ext, match, mask) \
+    if (isa.extension_enabled(ext)) \
+      DEFINE_INSN_MATCH(name, match, mask);
+#endif
+  #include "encoding.h"
+  #undef DECLARE_LONG_VECTOR_INSN
+  #undef DECLARE_RVO_INSN
 
 #ifdef HAVE_INT128
   #define DECLARE_VECTOR_PROFILE_INSN(name, mnemonic, profile, ext) \
@@ -964,6 +976,7 @@ void processor_t::register_base_instructions()
   #include "insn_list.h"
   #undef DEFINE_INSN
   #undef DEFINE_INSN_UNCOND
+  #undef DEFINE_INSN_MATCH
 
   // terminate instruction list with a catch-all
   register_base_insn(insn_desc_t::illegal_instruction);
